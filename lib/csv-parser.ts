@@ -52,6 +52,11 @@ export function parseCsvLine(rawLine: string): string[] {
   // Reassemble unquoted digit-comma-digit thousands separators:
   // e.g. "6,000,000", "$6,000", "1,234,567.89", "$500,000"
   let cleaned = rawLine;
+  // 1. Strip $ right before digits
+  cleaned = cleaned.replace(/\$\s*(\d)/g, '$1');
+  // 2. Reassemble digit-comma-digit groups (regex \d{1,3}(,\d{3})+)
+  cleaned = cleaned.replace(/\b(\d{1,3}(?:,\d{3})+)(?!\d)/g, (m) => m.replace(/,/g, ''));
+  // 3. Universal loop for any remaining comma thousands-separators
   while (/(\d),(\d{3})(?=\D|$)/.test(cleaned)) {
     cleaned = cleaned.replace(/(\d),(\d{3})(?=\D|$)/g, '$1$2');
   }
