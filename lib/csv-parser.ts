@@ -1,19 +1,39 @@
 import { Stakeholder, ShareClass } from './types';
 
 /**
- * Robust RFC 4180 compliant CSV line tokenizer
- * Correctly handles quotes, commas inside quotes, escaped quotes, and trim.
+ * Robust RFC 4180 compliant CSV line tokenizer.
+ * Handles tab separation (spreadsheet copy/paste), semicolons,
+ * commas inside quotes, escaped quotes, and reassembles unquoted
+ * digit-comma-digit thousands separators (e.g. 6,000,000 or $6,000).
  */
-export function parseCsvLine(line: string): string[] {
+export function parseCsvLine(rawLine: string): string[] {
+  // If line contains tabs, it is standard spreadsheet copy/paste:
+  if (rawLine.includes('\t')) {
+    return rawLine.split('\t').map((s) => s.trim().replace(/^["']|["']$/g, ''));
+  }
+
+  // If line contains semicolons and no unescaped commas outside quotes:
+  if (rawLine.includes(';') && !rawLine.includes(',')) {
+    return rawLine.split(';').map((s) => s.trim().replace(/^["']|["']$/g, ''));
+  }
+
+  // Pre-process unquoted numbers with comma thousands-separators:
+  // e.g. "6,000,000", "$6,000", "1,234,567.89", "$500,000"
+  // Repeatedly remove commas situated between digits and followed by 3 digits
+  let cleaned = rawLine;
+  while (/(?<=\d),(?=\d{3}(?:\D|$))/.test(cleaned)) {
+    cleaned = cleaned.replace(/(?<=\d),(?=\d{3}(?:\D|$))/g, '');
+  }
+
+  // RFC 4180 tokenizer
   const result: string[] = [];
   let current = '';
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-
+  for (let i = 0; i < cleaned.length; i++) {
+    const char = cleaned[i];
     if (char === '"') {
-      if (inQuotes && line[i + 1] === '"') {
+      if (inQuotes && cleaned[i + 1] === '"') {
         current += '"';
         i++; // Skip escaped quote
       } else {
@@ -42,6 +62,25 @@ export function cleanNumber(val: any): number {
   return isNaN(num) ? 0 : num;
 }
 
+/**
+ * Determine if a parsed row is a header row or a data row
+ */
+export function isHeaderRow(cols: string[]): boolean {
+  if (cols.length === 0) return false;
+  // If either col 2 or col 3 is already a positive number, this is definitely a data row
+  const num2 = cleanNumber(cols[2]);
+  const num3 = cleanNumber(cols[3]);
+  if (num2 > 0 || num3 > 0) {
+    return false;
+  }
+
+  // Check header keywords
+  const combined = cols.join(' ').toLowerCase();
+  const keywords = ['name', 'holder', 'class', 'share', 'invest', 'stock', 'equity', 'amount', 'paid', 'cost', 'basis'];
+  const matches = keywords.filter((k) => combined.includes(k));
+  return matches.length >= 2;
+}
+
 export interface CsvParseResult {
   success: boolean;
   stakeholders: Stakeholder[];
@@ -56,7 +95,8 @@ export interface CsvParseResult {
 }
 
 /**
- * Parses full CSV text with auto-header detection
+ * Parses full CSV / pasted text with automatic header detection,
+ * thousands-comma preservation, and strict validation.
  */
 export function parseCapTableCsv(csvText: string): CsvParseResult {
   const errors: string[] = [];
@@ -65,59 +105,75 @@ export function parseCapTableCsv(csvText: string): CsvParseResult {
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
 
-  if (lines.length < 2) {
+  if (lines.length === 0) {
     return {
       success: false,
       stakeholders: [],
       totalShares: 0,
       totalInvested: 0,
-      errors: ['File is empty or missing data rows.'],
+      errors: ['Input is empty. Please paste or upload cap table rows.'],
       summary: { commonCount: 0, preferredCount: 0, totalCount: 0 },
     };
   }
 
-  // Parse header row
-  const headerCols = parseCsvLine(lines[0]).map((h) => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const firstRowCols = parseCsvLine(lines[0]);
+  const firstRowIsHeader = isHeaderRow(firstRowCols);
 
-  let nameIndex = headerCols.findIndex((h) =>
-    h.includes('name') || h.includes('holder') || h.includes('investor') || h.includes('stakeholder')
-  );
-  let classIndex = headerCols.findIndex((h) =>
-    h.includes('class') || h.includes('type') || h.includes('shareclass')
-  );
-  let sharesIndex = headerCols.findIndex((h) =>
-    h.includes('share') || h.includes('quantity') || h.includes('count') || h.includes('amountofshares')
-  );
-  let investedIndex = headerCols.findIndex((h) =>
-    h.includes('invest') || h.includes('cost') || h.includes('basis') || h.includes('paid') || h.includes('amount')
-  );
+  let nameIndex = 0;
+  let classIndex = 1;
+  let sharesIndex = 2;
+  let investedIndex = 3;
 
-  // Fallbacks if headers not detected
-  if (nameIndex === -1) nameIndex = 0;
-  if (classIndex === -1) classIndex = 1;
-  if (sharesIndex === -1) sharesIndex = 2;
-  if (investedIndex === -1) investedIndex = 3;
+  let startIndex = 0;
+
+  if (firstRowIsHeader) {
+    startIndex = 1;
+    const headerCols = firstRowCols.map((h) => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    
+    // Exact & specific matching to prevent "shareclass" matching shares:
+    const detectedName = headerCols.findIndex((h) =>
+      h.includes('name') || h.includes('holder') || h.includes('investor') || h.includes('stakeholder')
+    );
+    const detectedClass = headerCols.findIndex((h) =>
+      h.includes('class') || h.includes('type')
+    );
+    const detectedShares = headerCols.findIndex((h) =>
+      h === 'shares' || h === 'share' || h === 'quantity' || h === 'sharecount' || (h.includes('share') && !h.includes('class')) || h.includes('amountofshares')
+    );
+    const detectedInvested = headerCols.findIndex((h) =>
+      h.includes('invest') || h.includes('cost') || h.includes('basis') || h.includes('paid') || (h.includes('amount') && !h.includes('share'))
+    );
+
+    if (detectedName !== -1) nameIndex = detectedName;
+    if (detectedClass !== -1) classIndex = detectedClass;
+    if (detectedShares !== -1) sharesIndex = detectedShares;
+    if (detectedInvested !== -1) investedIndex = detectedInvested;
+  }
 
   const stakeholders: Stakeholder[] = [];
   let commonCount = 0;
   let preferredCount = 0;
 
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseCsvLine(lines[i]);
+  for (let i = startIndex; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const cols = parseCsvLine(rawLine);
     if (cols.length === 0 || (cols.length === 1 && !cols[0])) continue;
 
-    const name = cols[nameIndex] || `Stakeholder #${i}`;
+    const rowNumber = i + 1;
+    const name = cols[nameIndex] || `Stakeholder #${rowNumber}`;
     const rawClass = (cols[classIndex] || '').toLowerCase();
     const shareClass: ShareClass =
       rawClass.includes('pref') || rawClass.includes('series') || rawClass.includes('investor')
         ? 'Preferred'
         : 'Common';
 
-    const shares = cleanNumber(cols[sharesIndex]);
-    const investmentAmount = cleanNumber(cols[investedIndex]);
+    const rawSharesStr = cols[sharesIndex];
+    const shares = cleanNumber(rawSharesStr);
+    const rawInvestedStr = cols[investedIndex];
+    const investmentAmount = cleanNumber(rawInvestedStr);
 
-    if (shares <= 0 && investmentAmount <= 0) {
-      errors.push(`Row ${i + 1} (${name}): Skipped because shares and investment amount are zero.`);
+    if (shares <= 0) {
+      errors.push(`Row ${rowNumber} ("${name}"): Invalid share count ("${rawSharesStr || '0'}"). Shares must be a positive number.`);
       continue;
     }
 
@@ -129,7 +185,7 @@ export function parseCapTableCsv(csvText: string): CsvParseResult {
       name,
       shareClass,
       shares,
-      investmentAmount,
+      investmentAmount: Math.max(investmentAmount, 0),
     });
   }
 

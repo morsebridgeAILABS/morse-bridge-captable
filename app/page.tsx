@@ -36,7 +36,7 @@ import {
   SAMPLE_CSV_TEMPLATE,
   CsvParseResult,
 } from '@/lib/csv-parser';
-import { calculateSafeConversion } from '@/lib/math/safe-math';
+import { calculateSafeConversion, calculateSingleSafePreview } from '@/lib/math/safe-math';
 import { calculateBlackScholes } from '@/lib/math/black-scholes';
 import { calculateWaterfall } from '@/lib/math/waterfall-math';
 import {
@@ -431,6 +431,12 @@ export default function MorseBridgePage() {
 
       setImportedSummary(parseResult);
       setActiveLedgerView('current');
+
+      if (parseResult.errors.length > 0) {
+        alert(
+          `Imported ${parseResult.stakeholders.length} stakeholder(s), but ${parseResult.errors.length} row(s) were flagged:\n\n${parseResult.errors.join('\n')}`
+        );
+      }
     } else {
       alert(
         parseResult.errors.length > 0
@@ -477,20 +483,17 @@ export default function MorseBridgePage() {
     }
 
     const baselineShares = state.capTable.reduce((acc, curr) => acc + (Number(curr.shares) || 0), 0) || 1;
-    const discountMultiplier = newSafeDiscount > 0 ? 1 - newSafeDiscount : 1;
-    const undiscountedCap = newSafeCap > 0 ? newSafeCap : (state.companyDetails.targetSeriesAValuation || 10_000_000);
-    const effectiveCap = undiscountedCap * discountMultiplier;
 
-    // 1. Pre-Round SAFE Implied Ownership (What founders & angels negotiate on the note)
-    const undiscountedPct = ((newSafeAmount / (undiscountedCap > 0 ? undiscountedCap : 1)) * 100).toFixed(2);
-    const preRoundOwnershipPct = ((newSafeAmount / (effectiveCap > 0 ? effectiveCap : 1)) * 100).toFixed(2);
+    // Use the exact shared SAFE math preview engine
+    const preview = calculateSingleSafePreview(
+      newSafeAmount,
+      newSafeCap,
+      newSafeDiscount,
+      baselineShares,
+      state.companyDetails.targetSeriesAValuation
+    );
 
-    // 2. Effective PPS and Shares
-    const basePps = undiscountedCap / baselineShares;
-    const effectivePps = basePps * discountMultiplier;
-    const shares = Math.round(newSafeAmount / (effectivePps > 0 ? effectivePps : 1));
-
-    // 3. Post-Series A Diluted Ownership (After new round capital)
+    // Post-Series A Diluted Ownership (After new round capital)
     const draftSafe: SafeNote = {
       id: 'draft-sim-safe',
       investor: newSafeName || 'Simulated Angel SAFE',
@@ -505,18 +508,18 @@ export default function MorseBridgePage() {
       [...state.safes, draftSafe]
     );
     const simulatedItem = simulatedConversion.safeBreakdown.find((s) => s.id === 'draft-sim-safe');
-    const postRoundOwnershipPct = simulatedItem ? simulatedItem.impliedOwnershipPct.toFixed(2) : preRoundOwnershipPct;
-
-    const isDiscountDriven = newSafeDiscount > 0;
+    const postRoundOwnershipPct = simulatedItem
+      ? simulatedItem.impliedOwnershipPct.toFixed(2)
+      : preview.dilutionPercent.toFixed(2);
 
     return {
-      preRoundOwnershipPct,
+      preRoundOwnershipPct: preview.dilutionPercent.toFixed(2),
       postRoundOwnershipPct,
-      undiscountedPct,
-      effectiveCap,
-      effectivePps,
-      shares,
-      isDiscountDriven,
+      undiscountedPct: preview.undiscountedPct.toFixed(2),
+      effectiveCap: preview.effectiveValuation,
+      effectivePps: preview.effectivePps,
+      shares: preview.shares,
+      isDiscountDriven: preview.isDiscountActive,
     };
   }, [
     newSafeAmount,

@@ -7,6 +7,68 @@ import {
   SafeBreakdownItem,
 } from '../types';
 
+export interface SafePreviewResult {
+  capPrice: number;
+  discountPrice: number;
+  effectivePps: number;
+  shares: number;
+  effectiveValuation: number;
+  dilutionPercent: number;
+  undiscountedPct: number;
+  isDiscountActive: boolean;
+}
+
+/**
+ * Accurately calculate single SAFE dilution preview metrics, accounting for
+ * cap, discount, and effective share price per conversion math.
+ */
+export function calculateSingleSafePreview(
+  amount: number,
+  valuationCap: number,
+  discount: number,
+  preConversionShares: number,
+  seriesAPreMoney?: number
+): SafePreviewResult {
+  const sharesBase = Math.max(Number(preConversionShares) || 0, 1);
+  const safeAmount = Math.max(Number(amount) || 0, 0);
+  const statedCap = Number(valuationCap) > 0 ? Number(valuationCap) : (Number(seriesAPreMoney) || 10_000_000);
+  const safeDiscount = Math.min(Math.max(Number(discount) || 0, 0), 0.99);
+
+  // 1. Cap Price = cap / preConversionShares
+  const capPrice = statedCap / sharesBase;
+
+  // 2. Discount Price = capPrice * (1 - discount)
+  const discountMultiplier = safeDiscount > 0 ? 1 - safeDiscount : 1;
+  const discountPrice = capPrice * discountMultiplier;
+
+  // 3. Effective conversion price = min(capPrice, discountPrice)
+  const isDiscountActive = safeDiscount > 0;
+  const effectivePps = isDiscountActive ? Math.min(capPrice, discountPrice) : capPrice;
+
+  // 4. Converted shares = amount / effectivePrice
+  const shares = effectivePps > 0 ? Math.round(safeAmount / effectivePps) : 0;
+
+  // 5. Effective Valuation = statedCap * discountMultiplier
+  const effectiveValuation = statedCap * discountMultiplier;
+
+  // 6. Pre-round dilution % = (amount / effectiveValuation) * 100
+  const dilutionPercent = effectiveValuation > 0 ? (safeAmount / effectiveValuation) * 100 : 0;
+
+  // Undiscounted percentage
+  const undiscountedPct = statedCap > 0 ? (safeAmount / statedCap) * 100 : 0;
+
+  return {
+    capPrice,
+    discountPrice,
+    effectivePps,
+    shares,
+    effectiveValuation,
+    dilutionPercent,
+    undiscountedPct,
+    isDiscountActive,
+  };
+}
+
 export function calculateSafeConversion(
   companyDetails: CompanyDetails,
   capTable: Stakeholder[],
