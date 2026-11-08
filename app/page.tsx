@@ -463,10 +463,60 @@ export default function MorseBridgePage() {
     document.body.removeChild(link);
   };
 
-  const safeEstimatedOwnershipPct = useMemo(() => {
-    if (newSafeCap <= 0) return 0;
-    return ((newSafeAmount / newSafeCap) * 100).toFixed(2);
-  }, [newSafeAmount, newSafeCap]);
+  const draftSafeSimulation = useMemo(() => {
+    if (newSafeAmount <= 0) {
+      return {
+        ownershipPct: '0.00',
+        effectivePps: 0,
+        shares: 0,
+        isDiscountDriven: false,
+      };
+    }
+
+    const draftSafe: SafeNote = {
+      id: 'draft-sim-safe',
+      investor: newSafeName || 'Simulated Angel SAFE',
+      amount: newSafeAmount,
+      valuationCap: newSafeCap,
+      discount: newSafeDiscount,
+      type: newSafeType,
+    };
+
+    // Calculate exact quant conversion including this draft note alongside all existing notes & Series A
+    const simulatedConversion = calculateSafeConversion(
+      state.companyDetails,
+      state.capTable,
+      [...state.safes, draftSafe]
+    );
+
+    const simulatedItem = simulatedConversion.safeBreakdown.find((s) => s.id === 'draft-sim-safe');
+    const ownershipPct = simulatedItem ? simulatedItem.impliedOwnershipPct.toFixed(2) : '0.00';
+    const effectivePps = simulatedItem ? simulatedItem.effectivePps : 0;
+    const shares = simulatedItem ? simulatedItem.estimatedShares : 0;
+
+    // Detect if discount lowered the effective conversion price below cap price:
+    const baselineShares = state.capTable.reduce((acc, curr) => acc + (Number(curr.shares) || 0), 0) || 1;
+    const roundPps = (state.companyDetails.targetSeriesAValuation || 1) / baselineShares;
+    const discountedPps = roundPps * (1 - (newSafeDiscount || 0));
+    const capPps = newSafeCap > 0 ? newSafeCap / baselineShares : discountedPps;
+    const isDiscountDriven = newSafeDiscount > 0 && discountedPps < capPps;
+
+    return {
+      ownershipPct,
+      effectivePps,
+      shares,
+      isDiscountDriven,
+    };
+  }, [
+    newSafeAmount,
+    newSafeCap,
+    newSafeDiscount,
+    newSafeType,
+    newSafeName,
+    state.companyDetails,
+    state.capTable,
+    state.safes,
+  ]);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#070b13] text-slate-200 font-sans">
@@ -1370,20 +1420,32 @@ export default function MorseBridgePage() {
                 </p>
 
                 {/* Live Dilution Simulation Card */}
-                <div className="rounded-xl bg-gradient-to-r from-emerald-500/10 via-cyan-500/10 to-amber-500/10 border border-emerald-500/30 p-4">
-                  <div className="flex items-baseline justify-between mb-1">
-                    <span className="text-xs font-semibold text-emerald-300 uppercase">
-                      Live Dilution Impact:
+                <div className="rounded-xl bg-gradient-to-r from-emerald-500/10 via-cyan-500/10 to-amber-500/10 border border-emerald-500/30 p-4 space-y-2">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xs font-semibold text-emerald-300 uppercase flex items-center gap-1.5">
+                      <Activity className="h-3.5 w-3.5" />
+                      Live Dilution Impact (Full Quant Conversion):
                     </span>
                     <span className="text-xl font-bold text-emerald-400 font-mono">
-                      ~{safeEstimatedOwnershipPct}% of your company
+                      ~{draftSafeSimulation.ownershipPct}% of your company
                     </span>
                   </div>
-                  <p className="text-xs text-slate-300">
-                    A <strong>${newSafeAmount.toLocaleString()}</strong> investment at a{' '}
-                    <strong>${newSafeCap.toLocaleString()}</strong> valuation cap will sell
-                    approximately <strong>{safeEstimatedOwnershipPct}%</strong> of equity upon Series A conversion.
+
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    A <strong>${newSafeAmount.toLocaleString()}</strong> check converts into{' '}
+                    <strong className="text-white font-mono">{draftSafeSimulation.shares.toLocaleString()}</strong> shares at an effective price of{' '}
+                    <strong className="text-cyan-300 font-mono">${draftSafeSimulation.effectivePps.toFixed(4)}</strong>, yielding{' '}
+                    <strong className="text-emerald-300 font-mono">{draftSafeSimulation.ownershipPct}%</strong> equity upon Series A conversion.
                   </p>
+
+                  {draftSafeSimulation.isDiscountDriven && (
+                    <div className="flex items-center space-x-1.5 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-lg">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-400 flex-shrink-0" />
+                      <span>
+                        <strong>Discount Active:</strong> The {(newSafeDiscount * 100).toFixed(0)}% discount gives the investor a lower conversion price than the valuation cap alone, increasing dilution from {(Number((newSafeAmount / (newSafeCap || 1)) * 100)).toFixed(2)}% to {draftSafeSimulation.ownershipPct}%.
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Form Controls */}
