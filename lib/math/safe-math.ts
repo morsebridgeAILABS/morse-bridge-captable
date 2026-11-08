@@ -35,8 +35,13 @@ export function calculateSafeConversion(
 
   let totalPostMoneyOwnershipPct = 0;
   postMoneySafes.forEach((safe) => {
-    const cap = Number(safe.valuationCap) > 0 ? Number(safe.valuationCap) : seriesAPreMoney;
-    const ownershipFraction = Math.min(Number(safe.amount) / cap, 0.90); // Cap sanity safeguard
+    const discountMultiplier = Number(safe.discount) > 0 ? 1 - Number(safe.discount) : 1;
+    const baseCap = Number(safe.valuationCap) > 0 ? Number(safe.valuationCap) : seriesAPreMoney;
+    const effectiveCap = baseCap * discountMultiplier;
+    const ownershipFraction = Math.min(
+      Number(safe.amount) / (effectiveCap > 0 ? effectiveCap : 1),
+      0.90
+    );
     totalPostMoneyOwnershipPct += ownershipFraction;
   });
 
@@ -44,13 +49,13 @@ export function calculateSafeConversion(
   let seriesAPps = seriesAPreMoney / baselineShares;
 
   // Process Pre-Money SAFEs:
-  // Conversion price = min(Cap / PreRoundShares, Series A PPS * (1 - Discount))
+  // Conversion price = min(CapPrice * (1 - Discount), Series A PPS * (1 - Discount))
   const calculatedPreSafes: SafeCalculated[] = preMoneySafes.map((safe) => {
     const discountFactor = 1 - (Number(safe.discount) || 0);
     const discountedPrice = seriesAPps * discountFactor;
     const capPrice =
       Number(safe.valuationCap) > 0
-        ? Number(safe.valuationCap) / baselineShares
+        ? (Number(safe.valuationCap) / baselineShares) * discountFactor
         : discountedPrice;
     const effectivePps = Math.min(discountedPrice, capPrice);
     const shares = Math.round(Number(safe.amount) / (effectivePps > 0 ? effectivePps : 1));
@@ -74,10 +79,16 @@ export function calculateSafeConversion(
   const totalPostMoneySafeShares = Math.round(preSeriesAShares * postMoneySafeMultiplier);
 
   const calculatedPostSafes: SafeCalculated[] = postMoneySafes.map((safe) => {
-    const cap = Number(safe.valuationCap) > 0 ? Number(safe.valuationCap) : seriesAPreMoney;
-    const safeFraction = totalPostMoneyOwnershipPct > 0 ? (Number(safe.amount) / cap) / totalPostMoneyOwnershipPct : 0;
+    const discountMultiplier = Number(safe.discount) > 0 ? 1 - Number(safe.discount) : 1;
+    const baseCap = Number(safe.valuationCap) > 0 ? Number(safe.valuationCap) : seriesAPreMoney;
+    const effectiveCap = baseCap * discountMultiplier;
+    const safeFraction =
+      totalPostMoneyOwnershipPct > 0
+        ? Number(safe.amount) / effectiveCap / totalPostMoneyOwnershipPct
+        : 0;
     const safeShares = Math.round(totalPostMoneySafeShares * safeFraction);
-    const effectivePps = safeShares > 0 ? Number(safe.amount) / safeShares : seriesAPps;
+    const effectivePps =
+      safeShares > 0 ? Number(safe.amount) / safeShares : seriesAPps * discountMultiplier;
     return {
       safe,
       shares: safeShares,
