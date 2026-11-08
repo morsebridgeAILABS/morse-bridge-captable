@@ -1,63 +1,12 @@
 import { Stakeholder, ShareClass } from './types';
 
 /**
- * Robust RFC 4180 compliant CSV line tokenizer.
- * Handles tab separation (spreadsheet copy/paste), semicolons,
- * commas inside quotes, escaped quotes, and reassembles unquoted
- * digit-comma-digit thousands separators (e.g. 6,000,000 or $6,000).
- */
-export function parseCsvLine(rawLine: string): string[] {
-  // If line contains tabs, it is standard spreadsheet copy/paste:
-  if (rawLine.includes('\t')) {
-    return rawLine.split('\t').map((s) => s.trim().replace(/^["']|["']$/g, ''));
-  }
-
-  // If line contains semicolons and no unescaped commas outside quotes:
-  if (rawLine.includes(';') && !rawLine.includes(',')) {
-    return rawLine.split(';').map((s) => s.trim().replace(/^["']|["']$/g, ''));
-  }
-
-  // Pre-process unquoted numbers with comma thousands-separators:
-  // e.g. "6,000,000", "$6,000", "1,234,567.89", "$500,000"
-  // Repeatedly remove commas situated between digits and followed by 3 digits
-  let cleaned = rawLine;
-  while (/(?<=\d),(?=\d{3}(?:\D|$))/.test(cleaned)) {
-    cleaned = cleaned.replace(/(?<=\d),(?=\d{3}(?:\D|$))/g, '');
-  }
-
-  // RFC 4180 tokenizer
-  const result: string[] = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < cleaned.length; i++) {
-    const char = cleaned[i];
-    if (char === '"') {
-      if (inQuotes && cleaned[i + 1] === '"') {
-        current += '"';
-        i++; // Skip escaped quote
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === ',' && !inQuotes) {
-      result.push(current.trim());
-      current = '';
-    } else {
-      current += char;
-    }
-  }
-
-  result.push(current.trim());
-  return result;
-}
-
-/**
- * Clean currency and formatted number strings (e.g. "$1,500,000.00" -> 1500000)
+ * Clean currency and formatted number strings (e.g. "$1,500,000.00" -> 1500000, "\"6,000,000\"" -> 6000000)
  */
 export function cleanNumber(val: any): number {
   if (typeof val === 'number') return isNaN(val) ? 0 : val;
   if (!val) return 0;
-  const str = String(val).replace(/[\$,\s]/g, '').trim();
+  const str = String(val).replace(/[^0-9.-]/g, '').trim();
   const num = parseFloat(str);
   return isNaN(num) ? 0 : num;
 }
@@ -66,8 +15,8 @@ export function cleanNumber(val: any): number {
  * Determine if a parsed row is a header row or a data row
  */
 export function isHeaderRow(cols: string[]): boolean {
-  if (cols.length === 0) return false;
-  // If either col 2 or col 3 is already a positive number, this is definitely a data row
+  if (!cols || cols.length === 0) return false;
+  // If either col 2 (Shares) or col 3 (Invested) is already a positive number, this is definitely a data row
   const num2 = cleanNumber(cols[2]);
   const num3 = cleanNumber(cols[3]);
   if (num2 > 0 || num3 > 0) {
@@ -79,6 +28,58 @@ export function isHeaderRow(cols: string[]): boolean {
   const keywords = ['name', 'holder', 'class', 'share', 'invest', 'stock', 'equity', 'amount', 'paid', 'cost', 'basis'];
   const matches = keywords.filter((k) => combined.includes(k));
   return matches.length >= 2;
+}
+
+/**
+ * Robust RFC 4180 compliant CSV line tokenizer.
+ * Handles tab separation (spreadsheet copy/paste), semicolons,
+ * commas inside quotes, escaped quotes, and reassembles unquoted
+ * digit-comma-digit thousands separators (e.g. 6,000,000 or $6,000).
+ */
+export function parseCsvLine(rawLine: string): string[] {
+  if (!rawLine || !rawLine.trim()) return [];
+
+  // Tab separation (Excel / Google Sheets copy-paste)
+  if (rawLine.includes('\t')) {
+    return rawLine.split('\t').map((s) => s.trim().replace(/^["']|["']$/g, ''));
+  }
+
+  // Semicolon separation
+  if (rawLine.includes(';') && !rawLine.includes(',')) {
+    return rawLine.split(';').map((s) => s.trim().replace(/^["']|["']$/g, ''));
+  }
+
+  // Reassemble unquoted digit-comma-digit thousands separators:
+  // e.g. "6,000,000", "$6,000", "1,234,567.89", "$500,000"
+  let cleaned = rawLine;
+  while (/(\d),(\d{3})(?=\D|$)/.test(cleaned)) {
+    cleaned = cleaned.replace(/(\d),(\d{3})(?=\D|$)/g, '$1$2');
+  }
+
+  // Standard RFC 4180 parsing for comma-separated tokens
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const char = cleaned[i];
+    if (char === '"') {
+      if (inQuotes && cleaned[i + 1] === '"') {
+        current += '"';
+        i++; // Escaped quote
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim().replace(/^["']|["']$/g, ''));
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  result.push(current.trim().replace(/^["']|["']$/g, ''));
+  return result;
 }
 
 export interface CsvParseResult {
@@ -100,7 +101,7 @@ export interface CsvParseResult {
  */
 export function parseCapTableCsv(csvText: string): CsvParseResult {
   const errors: string[] = [];
-  const lines = csvText
+  const lines = (csvText || '')
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
@@ -130,7 +131,7 @@ export function parseCapTableCsv(csvText: string): CsvParseResult {
     startIndex = 1;
     const headerCols = firstRowCols.map((h) => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
     
-    // Exact & specific matching to prevent "shareclass" matching shares:
+    // Priority exact / specific matching
     const detectedName = headerCols.findIndex((h) =>
       h.includes('name') || h.includes('holder') || h.includes('investor') || h.includes('stakeholder')
     );
