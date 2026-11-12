@@ -73,6 +73,7 @@ import {
   Users,
   HelpCircle,
   Sparkles,
+  AlertCircle,
   Info,
   Award,
   Wallet,
@@ -130,6 +131,8 @@ export default function MorseBridgePage() {
   const [classFilter, setClassFilter] = useState<'All' | 'Common' | 'Preferred'>('All');
   const [showGreeks, setShowGreeks] = useState(false);
   const [showDueDiligenceModal, setShowDueDiligenceModal] = useState(false);
+  const [showShareConfirm, setShowShareConfirm] = useState(false);
+  const [showBenchmarkSourceTooltip, setShowBenchmarkSourceTooltip] = useState(false);
   const [importedSummary, setImportedSummary] = useState<CsvParseResult | null>(null);
   const [pastedCsvText, setPastedCsvText] = useState('');
   const [importMethodTab, setImportMethodTab] = useState<'upload' | 'paste'>('upload');
@@ -227,10 +230,13 @@ export default function MorseBridgePage() {
   const founderMetrics = useMemo(() => {
     const founders = state.capTable.filter(
       (s) =>
-        s.name.toLowerCase().includes('founder') ||
-        s.name.toLowerCase().includes('ceo') ||
-        s.name.toLowerCase().includes('cto') ||
-        s.shareClass === 'Common'
+        s.isFounder === true ||
+        (s.isFounder === undefined &&
+          (s.name.toLowerCase().includes('founder') ||
+            s.name.toLowerCase().includes('ceo') ||
+            s.name.toLowerCase().includes('cto')) &&
+          !s.name.toLowerCase().includes('pool') &&
+          !s.name.toLowerCase().includes('option'))
     );
     const founderShares = founders.reduce((acc, curr) => acc + (Number(curr.shares) || 0), 0);
     const currentPct = totalIssuedShares > 0 ? (founderShares / totalIssuedShares) * 100 : 0;
@@ -243,8 +249,8 @@ export default function MorseBridgePage() {
     return {
       names: founders.map((f) => f.name.split(' ')[0]).join(' & '),
       shares: founderShares,
-      currentPct: currentPct.toFixed(1),
-      dilutedPct: dilutedPct.toFixed(1),
+      currentPct: currentPct.toFixed(2),
+      dilutedPct: dilutedPct.toFixed(2),
     };
   }, [state.capTable, totalIssuedShares, conversionResult]);
 
@@ -416,7 +422,7 @@ export default function MorseBridgePage() {
 
   const handleProcessImportedCsv = (csvText: string) => {
     const parseResult = parseCapTableCsv(csvText);
-    if (parseResult.success && parseResult.stakeholders.length > 0) {
+    if (parseResult.success && parseResult.errors.length === 0 && parseResult.stakeholders.length > 0) {
       const minAuthorized = Math.max(
         Number(state.companyDetails.totalAuthorizedShares) || 0,
         Math.round(parseResult.totalShares * 1.25)
@@ -433,16 +439,10 @@ export default function MorseBridgePage() {
 
       setImportedSummary(parseResult);
       setActiveLedgerView('current');
-
-      if (parseResult.errors.length > 0) {
-        alert(
-          `Imported ${parseResult.stakeholders.length} stakeholder(s), but ${parseResult.errors.length} row(s) were flagged:\n\n${parseResult.errors.join('\n')}`
-        );
-      }
     } else {
       alert(
         parseResult.errors.length > 0
-          ? `Could not import cap table:\n${parseResult.errors.join('\n')}`
+          ? `Could not import cap table. Validation failed:\n\n${parseResult.errors.join('\n')}`
           : 'CSV file format not recognized. Please use Name, ShareClass, Shares, InvestmentAmount.'
       );
     }
@@ -736,7 +736,7 @@ export default function MorseBridgePage() {
           </button>
 
           <button
-            onClick={handleCopyLink}
+            onClick={() => setShowShareConfirm(true)}
             className="flex w-full items-center justify-center space-x-1.5 rounded-lg border border-amber-500/60 bg-amber-500/15 px-3 py-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/25 active:scale-95 transition-all shadow-sm"
           >
             {copied ? (
@@ -842,7 +842,7 @@ export default function MorseBridgePage() {
                   </div>
                   <div>
                     <span className="text-slate-300 font-medium">
-                      Q1 2026 Market Benchmark for <strong className="text-white">{benchmarkRec.stageName}</strong>:
+                      Illustrative benchmark for <strong className="text-white">{benchmarkRec.stageName}</strong>:
                     </span>{' '}
                     <span className="font-mono font-bold text-cyan-400">
                       ${(benchmarkRec.preMoneyValuation / 1_000_000).toFixed(1)}M Pre-Money
@@ -850,6 +850,19 @@ export default function MorseBridgePage() {
                     <span className="text-slate-400 hidden sm:inline">
                       (Typical Check: ${(benchmarkRec.newMoneyRaised / 1_000_000).toFixed(1)}M • {benchmarkRec.impliedDilutionPct}% Dilution)
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowBenchmarkSourceTooltip((v) => !v)}
+                      className="ml-2 text-cyan-400 hover:text-cyan-300 text-[11px] underline font-medium cursor-pointer"
+                      title="Source: Figures are illustrative defaults and should be replaced with the user's own comparables."
+                    >
+                      Source
+                    </button>
+                    {showBenchmarkSourceTooltip && (
+                      <div className="mt-1 text-[11px] text-slate-300 bg-slate-900 border border-slate-700 rounded-lg p-2 shadow-lg">
+                        Source: Figures are illustrative defaults and should be replaced with the user&apos;s own comparables.
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
@@ -932,7 +945,7 @@ export default function MorseBridgePage() {
                         )}
                       </div>
                       <span className="text-[11px] text-slate-400 block mt-1">
-                        {founderMetrics.shares.toLocaleString()} Common shares
+                        {founderMetrics.shares.toLocaleString()} founder shares
                       </span>
                     </div>
 
@@ -961,10 +974,12 @@ export default function MorseBridgePage() {
                     <div className="rounded-xl border border-slate-800 bg-[#0d1424] p-4">
                       <span className="text-xs text-slate-400 block font-medium">Active SAFEs</span>
                       <span className="text-2xl font-bold text-amber-300 font-mono mt-1 block">
-                        ${totalSafeCapital.toLocaleString()}
+                        {currentStage === 'pre-seed' ? `$${totalSafeCapital.toLocaleString()}` : '$0'}
                       </span>
                       <span className="text-[11px] text-slate-400 block mt-1">
-                        {state.safes.length} unconverted notes
+                        {currentStage === 'pre-seed'
+                          ? `${state.safes.length} unconverted notes`
+                          : 'All SAFEs converted at Series Seed'}
                       </span>
                     </div>
                   </>
@@ -2225,6 +2240,11 @@ export default function MorseBridgePage() {
              ===================================================================== */}
           {activeTab === '409a' && (
             <div className="max-w-4xl space-y-6">
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-xs text-amber-200 flex items-start space-x-3">
+                <AlertCircle className="h-4 w-4 text-amber-400 mt-0.5 flex-shrink-0" />
+                <span>Indicative estimate only. A 409A valuation that gives IRS safe harbor must come from an independent appraiser. Do not set option strike prices from this figure.</span>
+              </div>
+
               <div className="rounded-2xl border border-slate-800 bg-[#0d1424] p-6 space-y-4">
                 <div className="flex items-center space-x-2">
                   <Award className="h-5 w-5 text-purple-400" />
@@ -2640,7 +2660,7 @@ export default function MorseBridgePage() {
                   <div className="space-y-3">
                     <textarea
                       rows={6}
-                      placeholder={`Paste CSV data here, for example:\nElena Rostova, Common, 4500000, 4500\nMarcus Vance, Common, 3500000, 3500\nVanguard Seed, Preferred, 1000000, 1500000`}
+                      placeholder={`Paste CSV data here, for example:\nElena Rostova, Common, 4500000, 4500\nMarcus Vance, Common, 3500000, 3500\nNorthgate Seed Partners, Preferred, 1000000, 1500000`}
                       value={pastedCsvText}
                       onChange={(e) => setPastedCsvText(e.target.value)}
                       className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs text-slate-200 font-mono focus:border-blue-400 focus:outline-none"
@@ -2673,7 +2693,7 @@ export default function MorseBridgePage() {
                   </button>
 
                   <button
-                    onClick={handleCopyLink}
+                    onClick={() => setShowShareConfirm(true)}
                     className="flex items-center space-x-1.5 rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"
                   >
                     <Share2 className="h-3.5 w-3.5" />
@@ -2723,7 +2743,20 @@ export default function MorseBridgePage() {
                 </div>
                 <div>
                   <span className="text-slate-500 block">Active SAFEs:</span>
-                  <span className="font-bold text-amber-300">${totalSafeCapital.toLocaleString()}</span>
+                  <span className="font-bold text-amber-300">
+                    {currentStage === 'pre-seed' ? `$${totalSafeCapital.toLocaleString()}` : '$0'}
+                  </span>
+                </div>
+                <div className="col-span-2 pt-2 border-t border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">409A Indicative Strike Price:</span>
+                    <span className="font-bold text-purple-300">
+                      ${bsmResult ? bsmResult.callPrice.toFixed(2) : state.params409A.strikePrice.toFixed(2)} / share
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-300/90 mt-1 font-sans">
+                    Indicative estimate only. A 409A valuation that gives IRS safe harbor must come from an independent appraiser. Do not set option strike prices from this figure.
+                  </p>
                 </div>
               </div>
 
@@ -2768,6 +2801,42 @@ export default function MorseBridgePage() {
               >
                 <Printer className="h-3.5 w-3.5" />
                 <span>Print One-Pager</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          SHARE LINK FULL CAP TABLE EXPOSURE CONFIRM MODAL (FIX 6)
+         ========================================================================= */}
+      {showShareConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-[#0c121e] p-6 shadow-2xl space-y-4">
+            <div className="flex items-center space-x-2 text-amber-400">
+              <AlertCircle className="h-5 w-5" />
+              <h3 className="font-bold text-white text-base">Share Cap Table Link</h3>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              This link contains your full cap table. Anyone you send it to can see every holder and number. Copy link?
+            </p>
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowShareConfirm(false)}
+                className="px-4 py-2 rounded-lg border border-slate-700 bg-slate-800 text-xs font-semibold text-slate-300 hover:text-white transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleCopyLink();
+                  setShowShareConfirm(false);
+                }}
+                className="px-4 py-2 rounded-lg border border-amber-500/50 bg-amber-500 text-slate-950 text-xs font-bold hover:bg-amber-400 transition-all shadow-md"
+              >
+                Copy
               </button>
             </div>
           </div>

@@ -7,6 +7,7 @@ export interface Stakeholder {
   shareClass: ShareClass;
   shares: number;
   investmentAmount: number;
+  isFounder?: boolean;
 }
 
 export interface SafeNote {

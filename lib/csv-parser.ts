@@ -149,6 +149,9 @@ export function parseCapTableCsv(csvText: string): CsvParseResult {
     const detectedInvested = headerCols.findIndex((h) =>
       h.includes('invest') || h.includes('cost') || h.includes('basis') || h.includes('paid') || (h.includes('amount') && !h.includes('share'))
     );
+    const detectedOwnership = headerCols.findIndex((h) =>
+      h.includes('ownership') || h.includes('percent') || h.includes('pct') || h.includes('%')
+    );
 
     if (detectedName !== -1) nameIndex = detectedName;
     if (detectedClass !== -1) classIndex = detectedClass;
@@ -156,9 +159,35 @@ export function parseCapTableCsv(csvText: string): CsvParseResult {
     if (detectedInvested !== -1) investedIndex = detectedInvested;
   }
 
-  const stakeholders: Stakeholder[] = [];
-  let commonCount = 0;
-  let preferredCount = 0;
+  // Check if unheadered 5-column format has ownership in col 4
+  let explicitOwnershipIndex = -1;
+  if (firstRowIsHeader) {
+    const headerCols = firstRowCols.map((h) => h.toLowerCase().replace(/[^a-z0-9%]/g, ''));
+    explicitOwnershipIndex = headerCols.findIndex((h) =>
+      h.includes('ownership') || h.includes('percent') || h.includes('pct') || h.includes('%')
+    );
+  } else if (firstRowCols.length >= 5) {
+    // If 5th column contains '%' or has numbers that look like ownership
+    const sampleVal = firstRowCols[4];
+    if (sampleVal && (sampleVal.includes('%') || (!isNaN(cleanNumber(sampleVal)) && cleanNumber(sampleVal) <= 100))) {
+      explicitOwnershipIndex = 4;
+    }
+  }
+
+  interface RawParsedRow {
+    rowNumber: number;
+    name: string;
+    shareClass: ShareClass;
+    shares: number;
+    rawSharesStr: string;
+    investmentAmount: number;
+    rawInvestedStr: string;
+    explicitOwnership?: number;
+    isTotalRow: boolean;
+  }
+
+  const rawRows: RawParsedRow[] = [];
+  let foundTotalRow: RawParsedRow | null = null;
 
   for (let i = startIndex; i < lines.length; i++) {
     const rawLine = lines[i];
@@ -178,32 +207,153 @@ export function parseCapTableCsv(csvText: string): CsvParseResult {
     const rawInvestedStr = cols[investedIndex];
     const investmentAmount = cleanNumber(rawInvestedStr);
 
-    if (shares <= 0) {
-      errors.push(`Row ${rowNumber} ("${name}"): Invalid share count ("${rawSharesStr || '0'}"). Shares must be a positive number.`);
-      continue;
+    let explicitOwnership: number | undefined = undefined;
+    if (explicitOwnershipIndex !== -1 && cols[explicitOwnershipIndex] !== undefined) {
+      const rawOwnStr = cols[explicitOwnershipIndex].replace('%', '').trim();
+      const parsedOwn = parseFloat(rawOwnStr);
+      if (!isNaN(parsedOwn)) {
+        explicitOwnership = parsedOwn;
+      }
     }
 
-    if (shareClass === 'Preferred') preferredCount++;
-    else commonCount++;
+    const nameLower = name.trim().toLowerCase();
+    const isTotalRow =
+      nameLower === 'total' ||
+      nameLower === 'totals' ||
+      nameLower.startsWith('total ') ||
+      nameLower === 'sum' ||
+      nameLower.startsWith('sum ');
 
-    stakeholders.push({
-      id: `imported-${Date.now()}-${i}`,
-      name,
-      shareClass,
-      shares,
-      investmentAmount: Math.max(investmentAmount, 0),
-    });
+    if (isTotalRow) {
+      foundTotalRow = {
+        rowNumber,
+        name,
+        shareClass,
+        shares,
+        rawSharesStr,
+        investmentAmount,
+        rawInvestedStr,
+        explicitOwnership,
+        isTotalRow: true,
+      };
+    } else {
+      rawRows.push({
+        rowNumber,
+        name,
+        shareClass,
+        shares,
+        rawSharesStr,
+        investmentAmount,
+        rawInvestedStr,
+        explicitOwnership,
+        isTotalRow: false,
+      });
+    }
   }
 
+  if (rawRows.length === 0) {
+    return {
+      success: false,
+      stakeholders: [],
+      totalShares: 0,
+      totalInvested: 0,
+      errors: ['No stakeholder rows found in cap table import.'],
+      summary: { commonCount: 0, preferredCount: 0, totalCount: 0 },
+    };
+  }
+
+  // 1. Validate share count on each row
+  for (const row of rawRows) {
+    if (row.shares <= 0 || isNaN(row.shares)) {
+      errors.push(`Row ${row.rowNumber} ("${row.name}"): Invalid share count ("${row.rawSharesStr || '0'}"). Shares must be a positive number.`);
+    }
+  }
+
+  const validRows = rawRows.filter((r) => r.shares > 0);
+  const sumOfHolderShares = validRows.reduce((sum, r) => sum + r.shares, 0);
+
+  // 2. Validate total shares equal sum of holder shares (if a Total row exists)
+  if (foundTotalRow) {
+    if (foundTotalRow.shares !== sumOfHolderShares) {
+      errors.push(
+        `Row ${foundTotalRow.rowNumber} ("${foundTotalRow.name}"): Total shares mismatch. Stated total is ${foundTotalRow.shares.toLocaleString()} shares, but sum of stakeholder shares is ${sumOfHolderShares.toLocaleString()} shares.`
+      );
+    }
+  }
+
+  // 3. Validate ownership percentages sum to 100.00% (allowing 0.01% rounding tolerance)
+  const rowsWithExplicitOwnership = validRows.filter((r) => r.explicitOwnership !== undefined);
+  if (rowsWithExplicitOwnership.length > 0) {
+    const totalExplicitOwnership = rowsWithExplicitOwnership.reduce(
+      (sum, r) => sum + (r.explicitOwnership || 0),
+      0
+    );
+
+    if (Math.abs(totalExplicitOwnership - 100.0) > 0.01) {
+      // Find rows whose stated ownership does not match their calculated share proportion
+      const mismatchedRows = rowsWithExplicitOwnership.filter((r) => {
+        const expectedPct = sumOfHolderShares > 0 ? (r.shares / sumOfHolderShares) * 100 : 0;
+        return Math.abs((r.explicitOwnership || 0) - expectedPct) > 0.01;
+      });
+
+      const badRowsDesc = mismatchedRows.length > 0
+        ? mismatchedRows
+            .map(
+              (r) =>
+                `Row ${r.rowNumber} ("${r.name}"): stated ${r.explicitOwnership?.toFixed(2)}%, calculated ${(
+                  (r.shares / sumOfHolderShares) *
+                  100
+                ).toFixed(2)}%`
+            )
+            .join('; ')
+        : rowsWithExplicitOwnership.map((r) => `Row ${r.rowNumber} ("${r.name}"): ${r.explicitOwnership}%`).join(', ');
+
+      errors.push(
+        `Ownership percentages sum to ${totalExplicitOwnership.toFixed(2)}% instead of 100.00% (tolerance: ±0.01%). Problematic rows: ${badRowsDesc}`
+      );
+    }
+  }
+
+  // If validation fails, do not load data
+  if (errors.length > 0) {
+    return {
+      success: false,
+      stakeholders: [],
+      totalShares: 0,
+      totalInvested: 0,
+      errors,
+      summary: { commonCount: 0, preferredCount: 0, totalCount: 0 },
+    };
+  }
+
+  const stakeholders: Stakeholder[] = validRows.map((r) => {
+    const lowerName = r.name.toLowerCase();
+    const isFounder =
+      (lowerName.includes('founder') || lowerName.includes('ceo') || lowerName.includes('cto')) &&
+      !lowerName.includes('pool') &&
+      !lowerName.includes('option');
+
+    return {
+      id: `imported-${Date.now()}-${r.rowNumber}`,
+      name: r.name,
+      shareClass: r.shareClass,
+      shares: r.shares,
+      investmentAmount: Math.max(r.investmentAmount, 0),
+      isFounder,
+    };
+  });
+
+  const commonCount = stakeholders.filter((s) => s.shareClass === 'Common').length;
+  const preferredCount = stakeholders.filter((s) => s.shareClass === 'Preferred').length;
   const totalShares = stakeholders.reduce((sum, s) => sum + s.shares, 0);
   const totalInvested = stakeholders.reduce((sum, s) => sum + s.investmentAmount, 0);
 
   return {
-    success: stakeholders.length > 0,
+    success: true,
     stakeholders,
     totalShares,
     totalInvested,
-    errors,
+    errors: [],
     summary: {
       commonCount,
       preferredCount,
@@ -216,7 +366,7 @@ export const SAMPLE_CSV_TEMPLATE = `Stakeholder Name,Share Class,Shares,Investme
 Elena Rostova (CEO & Founder),Common,4500000,$4500
 Marcus Vance (CTO & Founder),Common,3500000,$3500
 Employee Option Pool (Unallocated),Common,1000000,$0
-Vanguard Seed Fund,Preferred,1000000,$1500000
+Northgate Seed Partners,Preferred,1000000,$1500000
 First Check Angel Syndicate,Common,200000,$100000
 Horizon Ventures Seed II,Preferred,800000,$1000000
 `;

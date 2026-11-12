@@ -111,15 +111,15 @@ export function calculateSafeConversion(
   let seriesAPps = seriesAPreMoney / baselineShares;
 
   // Process Pre-Money SAFEs:
-  // Conversion price = min(CapPrice * (1 - Discount), Series A PPS * (1 - Discount))
+  // Conversion price = more favourable (lower) of Cap Price and Discounted Round PPS
   const calculatedPreSafes: SafeCalculated[] = preMoneySafes.map((safe) => {
-    const discountFactor = 1 - (Number(safe.discount) || 0);
-    const discountedPrice = seriesAPps * discountFactor;
+    const discountPrice =
+      Number(safe.discount) > 0 ? seriesAPps * (1 - Number(safe.discount)) : seriesAPps;
     const capPrice =
       Number(safe.valuationCap) > 0
-        ? (Number(safe.valuationCap) / baselineShares) * discountFactor
-        : discountedPrice;
-    const effectivePps = Math.min(discountedPrice, capPrice);
+        ? Number(safe.valuationCap) / baselineShares
+        : seriesAPps;
+    const effectivePps = Math.min(discountPrice, capPrice);
     const shares = Math.round(Number(safe.amount) / (effectivePps > 0 ? effectivePps : 1));
     return {
       safe,
@@ -280,5 +280,92 @@ export function calculateSafeConversion(
     seriesAPricePerShare: Number(seriesAPps.toFixed(4)),
     totalSafeDilutionPercent: Number(totalSafeDilutionPercent.toFixed(2)),
     safeBreakdown,
+  };
+}
+
+export interface ConvertedSafeResult {
+  postConversionSharesBeforeNewMoney: number;
+  convertedStakeholders: Stakeholder[];
+  totalConvertedShares: number;
+  totalSafeCapital: number;
+}
+
+/**
+ * Converts pre-round SAFEs at a priced equity round.
+ * Post-money SAFE: SAFE ownership % = investment / post-money valuation cap,
+ * measured on the company capitalization immediately before new money comes in.
+ * Pre-money SAFE: applies the more favourable (lower share price) of cap price and discount price.
+ */
+export function convertSafesAtRound(
+  preConversionShares: number,
+  safes: SafeNote[],
+  roundPreMoneyValuation: number = 10_000_000,
+  roundPricePerShare?: number
+): ConvertedSafeResult {
+  const baseShares = Math.max(Number(preConversionShares) || 0, 1);
+  const postMoneySafes = safes.filter((s) => s.type === 'Post-Money');
+  const preMoneySafes = safes.filter((s) => s.type === 'Pre-Money');
+
+  // 1. Post-money SAFEs:
+  let totalPostMoneyOwnershipPct = 0;
+  postMoneySafes.forEach((safe) => {
+    const cap = Number(safe.valuationCap) > 0 ? Number(safe.valuationCap) : roundPreMoneyValuation;
+    const ownershipPct = Number(safe.amount) / cap;
+    totalPostMoneyOwnershipPct += ownershipPct;
+  });
+
+  const convertedStakeholders: Stakeholder[] = [];
+  let totalConvertedShares = 0;
+  let totalSafeCapital = 0;
+
+  if (totalPostMoneyOwnershipPct > 0 && postMoneySafes.length > 0) {
+    const totalPostShares = Math.round(
+      baseShares * (totalPostMoneyOwnershipPct / (1 - totalPostMoneyOwnershipPct))
+    );
+    postMoneySafes.forEach((safe) => {
+      const cap = Number(safe.valuationCap) > 0 ? Number(safe.valuationCap) : roundPreMoneyValuation;
+      const ownershipFraction = (Number(safe.amount) / cap) / totalPostMoneyOwnershipPct;
+      const shares = Math.round(totalPostShares * ownershipFraction);
+      totalConvertedShares += shares;
+      totalSafeCapital += Number(safe.amount);
+      convertedStakeholders.push({
+        id: `conv-${safe.id}`,
+        name: `${safe.investor} (Converted SAFE)`,
+        shareClass: 'Preferred',
+        shares,
+        investmentAmount: Number(safe.amount),
+        isFounder: false,
+      });
+    });
+  }
+
+  // 2. Pre-money SAFEs:
+  const roundPps = roundPricePerShare && roundPricePerShare > 0
+    ? roundPricePerShare
+    : roundPreMoneyValuation / baseShares;
+
+  preMoneySafes.forEach((safe) => {
+    const capPrice = Number(safe.valuationCap) > 0 ? Number(safe.valuationCap) / baseShares : roundPps;
+    const discountPrice = Number(safe.discount) > 0 ? roundPps * (1 - Number(safe.discount)) : roundPps;
+    // More favourable for the holder is the lower share price (yields more shares)
+    const effectivePps = Math.min(capPrice, discountPrice);
+    const shares = effectivePps > 0 ? Math.round(Number(safe.amount) / effectivePps) : 0;
+    totalConvertedShares += shares;
+    totalSafeCapital += Number(safe.amount);
+    convertedStakeholders.push({
+      id: `conv-${safe.id}`,
+      name: `${safe.investor} (Converted SAFE)`,
+      shareClass: 'Preferred',
+      shares,
+      investmentAmount: Number(safe.amount),
+      isFounder: false,
+    });
+  });
+
+  return {
+    postConversionSharesBeforeNewMoney: baseShares + totalConvertedShares,
+    convertedStakeholders,
+    totalConvertedShares,
+    totalSafeCapital,
   };
 }

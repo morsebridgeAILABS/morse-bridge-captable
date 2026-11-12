@@ -153,7 +153,7 @@ export function calculateBenchmarkRecommendation(
     Math.round((base.typicalSafeCap * compositeMultiplier) / roundIncrement) * roundIncrement
   );
 
-  const rationale = `Based on Q1 2026 venture market benchmarks, ${base.name} rounds in ${sector.name} with ${traction.name} (${geo.name}) typically price at a median pre-money of $${(preMoneyValuation / 1_000_000).toFixed(1)}M (25th–75th percentile: $${(range25th / 1_000_000).toFixed(1)}M – $${(range75th / 1_000_000).toFixed(1)}M) for a $${(newMoneyRaised / 1_000_000).toFixed(1)}M lead investment.`;
+  const rationale = `Based on illustrative venture market benchmarks, ${base.name} rounds in ${sector.name} with ${traction.name} (${geo.name}) typically price at a median pre-money of $${(preMoneyValuation / 1_000_000).toFixed(1)}M (25th–75th percentile: $${(range25th / 1_000_000).toFixed(1)}M – $${(range75th / 1_000_000).toFixed(1)}M) for a $${(newMoneyRaised / 1_000_000).toFixed(1)}M lead investment.`;
 
   return {
     preMoneyValuation,

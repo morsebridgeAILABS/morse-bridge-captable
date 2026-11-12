@@ -22,6 +22,7 @@ export function generatePreSeedState(): TerminalState {
         shareClass: 'Common',
         shares: 5_000_000,
         investmentAmount: 5_000,
+        isFounder: true,
       },
       {
         id: 'ps-f2',
@@ -29,6 +30,7 @@ export function generatePreSeedState(): TerminalState {
         shareClass: 'Common',
         shares: 4_000_000,
         investmentAmount: 4_000,
+        isFounder: true,
       },
       {
         id: 'ps-pool',
@@ -36,6 +38,7 @@ export function generatePreSeedState(): TerminalState {
         shareClass: 'Common',
         shares: 1_000_000,
         investmentAmount: 0,
+        isFounder: false,
       },
     ],
     safes: [
@@ -89,6 +92,7 @@ export function generateSeedState(): TerminalState {
         shareClass: 'Common',
         shares: 4_500_000,
         investmentAmount: 4_500,
+        isFounder: true,
       },
       {
         id: 'stk-2',
@@ -96,6 +100,7 @@ export function generateSeedState(): TerminalState {
         shareClass: 'Common',
         shares: 3_500_000,
         investmentAmount: 3_500,
+        isFounder: true,
       },
       {
         id: 'stk-3',
@@ -103,33 +108,18 @@ export function generateSeedState(): TerminalState {
         shareClass: 'Common',
         shares: 1_000_000,
         investmentAmount: 0,
+        isFounder: false,
       },
       {
         id: 'stk-4',
-        name: 'Vanguard Seed Fund (Series Seed)',
+        name: 'Northgate Seed Partners (Series Seed)',
         shareClass: 'Preferred',
         shares: 1_000_000,
         investmentAmount: 1_500_000,
+        isFounder: false,
       },
     ],
-    safes: [
-      {
-        id: 'safe-1',
-        investor: 'Y Combinator (Post-Money SAFE)',
-        amount: 500_000,
-        valuationCap: 15_000_000,
-        discount: 0,
-        type: 'Post-Money',
-      },
-      {
-        id: 'safe-2',
-        investor: 'Horizon Angels (Pre-Money SAFE)',
-        amount: 1_000_000,
-        valuationCap: 12_000_000,
-        discount: 0.20,
-        type: 'Pre-Money',
-      },
-    ],
+    safes: [],
     params409A: {
       stockPrice: 3.50,
       strikePrice: 3.50,
@@ -157,16 +147,13 @@ export function generateSeriesAState(): TerminalState {
       seriesANewMoney: 10_000_000,
     },
     capTable: [
-      { id: 'sa-f1', name: 'Alex Rivera (CEO)', shareClass: 'Common', shares: 6_000_000, investmentAmount: 6_000 },
-      { id: 'sa-f2', name: 'Priya Sharma (CTO)', shareClass: 'Common', shares: 4_500_000, investmentAmount: 4_500 },
-      { id: 'sa-pool', name: 'Employee Option Pool (Expanded)', shareClass: 'Common', shares: 2_000_000, investmentAmount: 0 },
-      { id: 'sa-seed', name: 'Founders Fund Seed', shareClass: 'Preferred', shares: 2_000_000, investmentAmount: 2_500_000 },
-      { id: 'sa-lead', name: 'Benchmark Capital (Series A Lead)', shareClass: 'Preferred', shares: 3_500_000, investmentAmount: 10_000_000 },
+      { id: 'sa-f1', name: 'Alex Rivera (CEO)', shareClass: 'Common', shares: 6_000_000, investmentAmount: 6_000, isFounder: true },
+      { id: 'sa-f2', name: 'Priya Sharma (CTO)', shareClass: 'Common', shares: 4_500_000, investmentAmount: 4_500, isFounder: true },
+      { id: 'sa-pool', name: 'Employee Option Pool (Expanded)', shareClass: 'Common', shares: 2_000_000, investmentAmount: 0, isFounder: false },
+      { id: 'sa-seed', name: 'Founders Fund Seed', shareClass: 'Preferred', shares: 2_000_000, investmentAmount: 2_500_000, isFounder: false },
+      { id: 'sa-lead', name: 'Benchmark Capital (Series A Lead)', shareClass: 'Preferred', shares: 3_500_000, investmentAmount: 10_000_000, isFounder: false },
     ],
-    safes: [
-      { id: 'safe-sa-1', investor: 'Strategic Enterprise Angels', amount: 750_000, valuationCap: 25_000_000, discount: 0.15, type: 'Post-Money' },
-      { id: 'safe-sa-2', investor: 'Techstars Accelerator Fund', amount: 250_000, valuationCap: 18_000_000, discount: 0, type: 'Post-Money' },
-    ],
+    safes: [],
     params409A: {
       stockPrice: 6.25,
       strikePrice: 6.25,
@@ -186,9 +173,9 @@ export function generateSeriesAState(): TerminalState {
  */
 export function generateSeriesBState(): TerminalState {
   const capTable: Stakeholder[] = [
-    { id: 'f-1', name: 'Elena Rostova (CEO & Founder)', shareClass: 'Common', shares: 8_000_000, investmentAmount: 8_000 },
-    { id: 'f-2', name: 'Marcus Vance (CTO & Founder)', shareClass: 'Common', shares: 6_000_000, investmentAmount: 6_000 },
-    { id: 'pool', name: 'Employee Option Pool (Unallocated)', shareClass: 'Common', shares: 3_500_000, investmentAmount: 0 },
+    { id: 'f-1', name: 'Elena Rostova (CEO & Founder)', shareClass: 'Common', shares: 8_000_000, investmentAmount: 8_000, isFounder: true },
+    { id: 'f-2', name: 'Marcus Vance (CTO & Founder)', shareClass: 'Common', shares: 6_000_000, investmentAmount: 6_000, isFounder: true },
+    { id: 'pool', name: 'Employee Option Pool (Unallocated)', shareClass: 'Common', shares: 3_500_000, investmentAmount: 0, isFounder: false },
   ];
 
   // 10 Seed Angels
@@ -252,10 +239,7 @@ export function generateSeriesBState(): TerminalState {
       seriesANewMoney: 20_000_000,
     },
     capTable,
-    safes: [
-      { id: 'safe-1', investor: 'Y Combinator W21 SAFE', amount: 500_000, valuationCap: 20_000_000, discount: 0, type: 'Post-Money' },
-      { id: 'safe-2', investor: 'Strategic AI Venture Fund', amount: 2_500_000, valuationCap: 45_000_000, discount: 0.15, type: 'Pre-Money' },
-    ],
+    safes: [],
     params409A: {
       stockPrice: 15.50,
       strikePrice: 15.50,

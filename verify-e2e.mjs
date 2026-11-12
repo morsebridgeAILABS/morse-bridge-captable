@@ -125,7 +125,7 @@ async function runSuite() {
         { id: 'stk-1', name: 'Elena Rostova', shareClass: 'Common', shares: 4500000, investmentAmount: 4500 },
         { id: 'stk-2', name: 'Marcus Vance', shareClass: 'Common', shares: 3500000, investmentAmount: 3500 },
         { id: 'stk-3', name: 'Option Pool', shareClass: 'Common', shares: 1000000, investmentAmount: 0 },
-        { id: 'stk-4', name: 'Vanguard Seed', shareClass: 'Preferred', shares: 1000000, investmentAmount: 1500000 },
+        { id: 'stk-4', name: 'Northgate Seed Partners', shareClass: 'Preferred', shares: 1000000, investmentAmount: 1500000 },
       ],
       safes: [
         { id: 'safe-1', investor: 'YC Post-Money', amount: 500000, valuationCap: 15000000, discount: 0, type: 'Post-Money' },

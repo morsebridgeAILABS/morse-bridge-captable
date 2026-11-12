@@ -16,6 +16,7 @@ export const DEFAULT_TERMINAL_STATE: TerminalState = {
       shareClass: 'Common',
       shares: 4_500_000,
       investmentAmount: 4_500,
+      isFounder: true,
     },
     {
       id: 'stk-2',
@@ -23,6 +24,7 @@ export const DEFAULT_TERMINAL_STATE: TerminalState = {
       shareClass: 'Common',
       shares: 3_500_000,
       investmentAmount: 3_500,
+      isFounder: true,
     },
     {
       id: 'stk-3',
@@ -30,33 +32,18 @@ export const DEFAULT_TERMINAL_STATE: TerminalState = {
       shareClass: 'Common',
       shares: 1_000_000,
       investmentAmount: 0,
+      isFounder: false,
     },
     {
       id: 'stk-4',
-      name: 'Vanguard Seed Fund (Series Seed)',
+      name: 'Northgate Seed Partners (Series Seed)',
       shareClass: 'Preferred',
       shares: 1_000_000,
       investmentAmount: 1_500_000,
+      isFounder: false,
     },
   ],
-  safes: [
-    {
-      id: 'safe-1',
-      investor: 'Y Combinator (Post-Money SAFE)',
-      amount: 500_000,
-      valuationCap: 15_000_000,
-      discount: 0,
-      type: 'Post-Money',
-    },
-    {
-      id: 'safe-2',
-      investor: 'Horizon Angels (Pre-Money SAFE)',
-      amount: 1_000_000,
-      valuationCap: 12_000_000,
-      discount: 0.20,
-      type: 'Pre-Money',
-    },
-  ],
+  safes: [],
   params409A: {
     stockPrice: 3.50,
     strikePrice: 3.50,
@@ -100,6 +87,31 @@ export function decodeStateFromHash(hashString: string): TerminalState | null {
     if (!parsed || !parsed.companyDetails || !Array.isArray(parsed.capTable)) {
       return null;
     }
+
+    // Backward-compatibility migrations for links generated prior to updates:
+    parsed.capTable.forEach((s) => {
+      // 1. Migrate Vanguard Seed Fund to Northgate Seed Partners
+      if (s.name && s.name.includes('Vanguard Seed')) {
+        s.name = s.name.replace(/Vanguard Seed Fund/g, 'Northgate Seed Partners').replace(/Vanguard Seed/g, 'Northgate Seed Partners');
+      }
+      // 2. Set isFounder flag if missing from older URL state
+      if (s.isFounder === undefined) {
+        const lower = (s.name || '').toLowerCase();
+        s.isFounder =
+          (lower.includes('founder') || lower.includes('ceo') || lower.includes('cto')) &&
+          !lower.includes('pool') &&
+          !lower.includes('option');
+      }
+    });
+
+    if (Array.isArray(parsed.safes)) {
+      parsed.safes.forEach((safe) => {
+        if (safe.investor && safe.investor.includes('Vanguard Seed')) {
+          safe.investor = safe.investor.replace(/Vanguard Seed Fund/g, 'Northgate Seed Partners').replace(/Vanguard Seed/g, 'Northgate Seed Partners');
+        }
+      });
+    }
+
     return parsed;
   } catch (error) {
     console.warn('Failed to decompress terminal state from URL, falling back to default:', error);
